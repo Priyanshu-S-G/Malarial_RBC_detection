@@ -81,6 +81,8 @@ python app.py
 http://127.0.0.1:5000
 ```
 
+![demo](static/Animation.gif)
+
 Upload an image → click Process Image → inspect outputs.
 
 ---
