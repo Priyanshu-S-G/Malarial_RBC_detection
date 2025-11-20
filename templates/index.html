@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Malaria RBC Preprocessing & Segmentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        /* Upload Section */
+        #uploadSection {
+            text-align: center;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 60px 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9ff;
+        }
+
+        .upload-area:hover {
+            background: #f0f2ff;
+            border-color: #764ba2;
+        }
+
+        .upload-area.dragover {
+            background: #e8ebff;
+            border-color: #764ba2;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .upload-text {
+            font-size: 1.2em;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* Preview Section */
+        #previewSection {
+            display: none;
+            text-align: center;
+        }
+
+        .preview-container {
+            margin: 30px 0;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 12px 30px;
+            font-size: 1em;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        /* Loading Spinner */
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Results Section */
+        #resultsSection {
+            display: none;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        .result-item {
+            text-align: center;
+            background: #f8f9ff;
+            padding: 20px;
+            border-radius: 8px;
+            transition: transform 0.3s;
+        }
+
+        .result-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+        }
+
+        .result-image {
+            width: 100%;
+            height: auto;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .result-label {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .divider {
+            height: 3px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+            margin: 30px 0;
+        }
+
+        .error {
+            background: #fee;
+            border: 2px solid #fcc;
+            color: #c33;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .success-message {
+            color: #2d7d2d;
+            font-weight: 600;
+            margin: 20px 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔬 Malaria RBC Analysis</h1>
+            <p>Automated Preprocessing & Segmentation Pipeline</p>
+        </header>
+
+        <div class="content">
+            <!-- Upload Section -->
+            <div id="uploadSection">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📤</div>
+                    <div class="upload-text">Drag & Drop your RBC image here</div>
+                    <div class="upload-hint">or click to browse (PNG, JPG, TIFF supported)</div>
+                </div>
+                <input type="file" id="fileInput" accept="image/png,image/jpeg,image/jpg,image/bmp,image/tiff">
+            </div>
+
+            <!-- Error Message -->
+            <div class="error" id="errorMsg"></div>
+
+            <!-- Preview Section -->
+            <div id="previewSection">
+                <h2 class="section-title">📷 Uploaded Image</h2>
+                <div class="preview-container">
+                    <img id="previewImage" class="preview-image" alt="Preview">
+                </div>
+                <div class="button-group">
+                    <button class="btn-primary" id="processBtn">🔄 Process Image</button>
+                    <button class="btn-secondary" id="resetBtn">↺ Upload New Image</button>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div class="loading" id="loadingState">
+                <div class="spinner"></div>
+                <p>Processing image... This may take a moment.</p>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection">
+                <div class="divider"></div>
+                <h2 class="section-title">✨ Processing Results</h2>
+                <div class="success-message" id="successMsg"></div>
+                <div class="results-grid" id="resultsGrid"></div>
+                <div class="button-group" style="margin-top: 40px;">
+                    <button class="btn-secondary" id="resetBtn2">↺ Process Another Image</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilename = null;
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadSection = document.getElementById('uploadSection');
+        const previewSection = document.getElementById('previewSection');
+        const resultsSection = document.getElementById('resultsSection');
+        const loadingState = document.getElementById('loadingState');
+        const errorMsg = document.getElementById('errorMsg');
+        const previewImage = document.getElementById('previewImage');
+        const processBtn = document.getElementById('processBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const resetBtn2 = document.getElementById('resetBtn2');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const successMsg = document.getElementById('successMsg');
+
+        // Upload area click
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) handleFileUpload(file);
+        });
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) handleFileUpload(file);
+        });
+
+        // Handle file upload
+        async function handleFileUpload(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                errorMsg.style.display = 'none';
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    currentFilename = data.filename;
+                    previewImage.src = data.preview_url;
+                    uploadSection.style.display = 'none';
+                    previewSection.style.display = 'block';
+                } else {
+                    showError(data.error || 'Upload failed');
+                }
+            } catch (error) {
+                showError('Upload failed: ' + error.message);
+            }
+        }
+
+        // Process button
+        processBtn.addEventListener('click', async () => {
+            processBtn.disabled = true;
+            previewSection.style.display = 'none';
+            loadingState.style.display = 'block';
+            errorMsg.style.display = 'none';
+
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentFilename })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    showError(data.error || 'Processing failed');
+                    previewSection.style.display = 'block';
+                }
+            } catch (error) {
+                showError('Processing failed: ' + error.message);
+                previewSection.style.display = 'block';
+            } finally {
+                processBtn.disabled = false;
+                loadingState.style.display = 'none';
+            }
+        });
+
+        // Display results
+        function displayResults(data) {
+            resultsGrid.innerHTML = '';
+            successMsg.textContent = `✓ Processing complete! Generated ${data.outputs.length} output(s).`;
+
+            // Add original image
+            const originalItem = createResultItem(data.original, 'Original Image');
+            resultsGrid.appendChild(originalItem);
+
+            // Add processed outputs
+            data.outputs.forEach(output => {
+                const item = createResultItem(output.url, output.label);
+                resultsGrid.appendChild(item);
+            });
+
+            resultsSection.style.display = 'block';
+        }
+
+        // Create result item
+        function createResultItem(url, label) {
+            const item = document.createElement('div');
+            item.className = 'result-item';
+            item.innerHTML = `
+                <img src="${url}" class="result-image" alt="${label}">
+                <div class="result-label">${label}</div>
+            `;
+            return item;
+        }
+
+        // Reset
+        function resetApp() {
+            uploadSection.style.display = 'block';
+            previewSection.style.display = 'none';
+            resultsSection.style.display = 'none';
+            loadingState.style.display = 'none';
+            errorMsg.style.display = 'none';
+            fileInput.value = '';
+            currentFilename = null;
+            resultsGrid.innerHTML = '';
+        }
+
+        resetBtn.addEventListener('click', resetApp);
+        resetBtn2.addEventListener('click', resetApp);
+
+        // Show error
+        function showError(message) {
+            errorMsg.textContent = '⚠️ ' + message;
+            errorMsg.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
