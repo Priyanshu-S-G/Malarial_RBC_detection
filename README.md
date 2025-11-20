@@ -34,15 +34,16 @@
 
 ## Repo layout
 
+```
 Malarial_RBC_detection/  
-├─ app.py # Flask app (upload → process endpoints)  
-├─ preprocessing.py # Preprocessing pipeline (core logic)  
+├─ app.py             # Flask app (upload → process endpoints)  
+├─ preprocessing.py   # Preprocessing pipeline (core logic)  
 ├─ requirements.txt  
-├─ README.md # <-- you are here  
+├─ README.md          # <-- you are here  
 ├─ templates/  
-│ └─ index.html # Frontend UI  
-└─ static/  
-└─ .gitkeep  
+│ └─ index.html       # Web UI  
+└─ static/testing/    # Sample RBC images (infected + uninfected)
+```
 
 ---
 
