@@ -7,16 +7,10 @@ def process_image(input_path: str, output_dir: str) -> list:
     Save intermediate images to output_dir with names: <base>_<step>.png
     Return: list of tuples [(filename, display_name), ...]
 
-Steps implemented (tuned for the Kaggle cropped-cell images):
- 1. Resize + normalize
- 2. White balance (gray-world)
- 3. LAB -> CLAHE on L-channel
- 4. Extract A-channel (parasite enhancer)
- 5. Bilateral filter (edge-preserving smoothing)
- 6. Adaptive threshold (Gaussian)
- 7. Morphological cleanup (remove small specks, close holes)
- 8. Contour extraction -> final mask
- 9. Overlay mask on original image
+Updated:
+ - Uses HSV-based purple/magenta masking to isolate parasite regions.
+ - Keeps A-channel + bilateral outputs for debugging/comparison.
+ - Morphological cleanup and contour fill run on HSV-derived mask.
 """
 
 import os
@@ -31,10 +25,15 @@ CLAHE_CLIP = 0.03          # CLAHE clip limit (low for microscopy)
 BILATERAL_D = 7            # bilateral filter diameter
 BILATERAL_SIGMA_COLOR = 75
 BILATERAL_SIGMA_SPACE = 75
-ADAPTIVE_BLOCKSIZE = 11    # must be odd
+ADAPTIVE_BLOCKSIZE = 11    # must be odd (not used for HSV path but kept for reference)
 ADAPTIVE_C = 2
 MIN_OBJECT_AREA = 40       # remove blobs smaller than this (in pixels) - tweak with image scale
 MORPH_KERNEL = 3           # morphological kernel size
+
+# HSV bounds for purple/magenta detection (OpenCV H:0-179)
+# Tweak these if your stain/hue shifts
+HSV_LOWER = np.array([125, 50, 30], dtype=np.uint8)
+HSV_UPPER = np.array([155, 255, 255], dtype=np.uint8)
 # ---------------------------------------------------
 
 def _ensure_dir(path):
@@ -66,7 +65,6 @@ def gray_world_white_balance(img_rgb: np.ndarray) -> np.ndarray:
     """
     Simple gray-world white balance on RGB image.
     """
-    # avoid division by zero
     img = img_rgb.astype(np.float32) + 1e-6
     avgR = np.mean(img[:, :, 0])
     avgG = np.mean(img[:, :, 1])
@@ -84,13 +82,9 @@ def gray_world_white_balance(img_rgb: np.ndarray) -> np.ndarray:
 def clahe_on_l_channel(img_rgb: np.ndarray, clip_limit: float = CLAHE_CLIP) -> np.ndarray:
     """
     Convert to LAB, apply CLAHE to L channel, return RGB image after merging.
-    clip_limit: fraction between 0 and 1 (skimage expects float input for equalize_adapthist).
-    We'll use skimage.exposure.equalize_adapthist for a robust result.
     """
-    # convert to LAB using OpenCV (it expects BGR)
-    lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)  # L A B (OpenCV scales L:0-255)
+    lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)
     l, a, b = cv2.split(lab)
-    # apply CLAHE using cv2
     clahe = cv2.createCLAHE(clipLimit=max(1.0, clip_limit*10), tileGridSize=(8,8))
     l2 = clahe.apply(l)
     lab2 = cv2.merge([l2, a, b])
@@ -100,18 +94,15 @@ def clahe_on_l_channel(img_rgb: np.ndarray, clip_limit: float = CLAHE_CLIP) -> n
 def extract_a_channel(img_rgb: np.ndarray) -> np.ndarray:
     """
     Return the 'A' channel from LAB color space scaled to uint8 (0-255).
-    In LAB, A channel encodes green-red; parasites (purple) often stand out here.
     """
     lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)
     l, a, b = cv2.split(lab)
-    # a is 0..255 (OpenCV), return as-is (uint8)
     return a
 
 def bilateral_smooth(img_gray: np.ndarray, d=BILATERAL_D, sigma_color=BILATERAL_SIGMA_COLOR, sigma_space=BILATERAL_SIGMA_SPACE) -> np.ndarray:
     return cv2.bilateralFilter(img_gray, d, sigma_color, sigma_space)
 
 def adaptive_threshold(img_gray: np.ndarray, blocksize=ADAPTIVE_BLOCKSIZE, C=ADAPTIVE_C) -> np.ndarray:
-    # ensure blocksize is odd and >1
     if blocksize % 2 == 0:
         blocksize += 1
     thr = cv2.adaptiveThreshold(img_gray, 255,
@@ -122,11 +113,8 @@ def adaptive_threshold(img_gray: np.ndarray, blocksize=ADAPTIVE_BLOCKSIZE, C=ADA
 
 def morphological_cleanup(mask: np.ndarray, kernel_size=MORPH_KERNEL, min_area=MIN_OBJECT_AREA) -> np.ndarray:
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    # close then open to fill holes and remove noise
     closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    # remove small objects by contour filtering
     contours, _ = cv2.findContours(opened.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cleaned = np.zeros_like(opened)
     for cnt in contours:
@@ -136,9 +124,6 @@ def morphological_cleanup(mask: np.ndarray, kernel_size=MORPH_KERNEL, min_area=M
     return cleaned
 
 def contours_to_filled_mask(mask: np.ndarray, min_area=MIN_OBJECT_AREA) -> np.ndarray:
-    """
-    Recompute mask by filling contours and filtering by area. Returns binary mask uint8.
-    """
     contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     newm = np.zeros_like(mask)
     for cnt in contours:
@@ -148,26 +133,28 @@ def contours_to_filled_mask(mask: np.ndarray, min_area=MIN_OBJECT_AREA) -> np.nd
     return newm
 
 def overlay_mask_on_rgb(img_rgb: np.ndarray, mask: np.ndarray, color=(255, 0, 0), alpha=0.45) -> np.ndarray:
-    """
-    Overlay binary mask on RGB image. color is RGB tuple (e.g., red).
-    alpha controls mask opacity.
-    """
     overlay = img_rgb.copy().astype(np.float32)
     mask_bool = (mask > 0)
-    # create color layer
     color_layer = np.zeros_like(overlay, dtype=np.float32)
     color_layer[..., 0] = color[0]
     color_layer[..., 1] = color[1]
     color_layer[..., 2] = color[2]
-    # blend where mask is true
     overlay[mask_bool] = (1 - alpha) * overlay[mask_bool] + alpha * color_layer[mask_bool]
     return np.clip(overlay, 0, 255).astype(np.uint8)
 
+def extract_purple_mask(img_rgb: np.ndarray, lower=HSV_LOWER, upper=HSV_UPPER) -> np.ndarray:
+    """
+    Extract purple/magenta region (malaria parasite) from RGB image using HSV inRange.
+    Returns binary mask uint8 (0/255).
+    """
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    mask = cv2.inRange(hsv, lower, upper)
+    # small close to unify fragmented pixels
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    return mask
+
 def process_image(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
-    """
-    Main entrypoint. Saves intermediate images into output_dir and returns list of (filename, label).
-    Filenames are saved as <base>_<step>.png
-    """
     _ensure_dir(output_dir)
 
     if not os.path.isfile(input_path):
@@ -175,7 +162,6 @@ def process_image(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
 
     base = os.path.splitext(os.path.basename(input_path))[0]
 
-    # Read image with cv2 (BGR) then convert to RGB
     img_bgr = cv2.imread(input_path, cv2.IMREAD_COLOR)
     if img_bgr is None:
         raise ValueError("Failed to read image or unsupported format: " + input_path)
@@ -201,29 +187,34 @@ def process_image(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
     _save_rgb(clahe_rgb, os.path.join(output_dir, fname))
     outputs.append((fname, "CLAHE (L-channel)"))
 
-    # Step 4: Extract A-channel (parasite enhancer)
+    # Step 4: Extract A-channel (parasite enhancer) - kept for debug
     a_chan = extract_a_channel(clahe_rgb)
-    # normalize a_chan for visualization (stretch contrast)
     a_stretched = exposure.rescale_intensity(a_chan, in_range='image', out_range=(0,255)).astype(np.uint8)
     fname = f"{base}_a_channel.png"
     _save_rgb(cv2.merge([a_stretched, a_stretched, a_stretched]), os.path.join(output_dir, fname))
     outputs.append((fname, "A-channel (parasite enhancer)"))
 
-    # Step 5: Bilateral smoothing (on a-channel to preserve edges)
+    # Step 5: Bilateral smoothing (on A-channel) - kept for debug
     bilateral = bilateral_smooth(a_stretched, d=BILATERAL_D, sigma_color=BILATERAL_SIGMA_COLOR, sigma_space=BILATERAL_SIGMA_SPACE)
     fname = f"{base}_bilateral.png"
     _save_rgb(cv2.merge([bilateral, bilateral, bilateral]), os.path.join(output_dir, fname))
     outputs.append((fname, "Bilateral Filtered"))
 
-    # Step 6: Adaptive threshold (on bilateral result)
-    # Ensure image is uint8 grayscale
-    thr = adaptive_threshold(bilateral, blocksize=ADAPTIVE_BLOCKSIZE, C=ADAPTIVE_C)
-    fname = f"{base}_adaptive_thresh.png"
-    _save_rgb(thr, os.path.join(output_dir, fname))
-    outputs.append((fname, "Adaptive Threshold"))
+    # NEW STEP: Extract HSV purple mask (primary parasite candidate)
+    purple_mask = extract_purple_mask(clahe_rgb)
+    fname = f"{base}_purple_mask.png"
+    _save_rgb(purple_mask, os.path.join(output_dir, fname))
+    outputs.append((fname, "HSV Purple Mask"))
 
-    # Step 7: Morphological cleanup
-    morph = morphological_cleanup(thr, kernel_size=MORPH_KERNEL, min_area=MIN_OBJECT_AREA)
+    # Optional smoothing on mask (small gaussian blur) then binarize again to reduce pixel noise
+    blur_mask = cv2.GaussianBlur(purple_mask, (3,3), 0)
+    _, bin_mask = cv2.threshold(blur_mask, 127, 255, cv2.THRESH_BINARY)
+    fname = f"{base}_purple_mask_blur.png"
+    _save_rgb(bin_mask, os.path.join(output_dir, fname))
+    outputs.append((fname, "Purple Mask (blurred)"))
+
+    # Step 7: Morphological cleanup on purple mask
+    morph = morphological_cleanup(bin_mask, kernel_size=MORPH_KERNEL, min_area=MIN_OBJECT_AREA)
     fname = f"{base}_morph_clean.png"
     _save_rgb(morph, os.path.join(output_dir, fname))
     outputs.append((fname, "Morphological Cleanup"))

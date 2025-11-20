@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Flask static folders (avoid giant repos)
+static/uploads/
+static/testing/
+static/outputs/
+
+# Temporary files
+*.tmp
+*.log
